@@ -1,122 +1,70 @@
 #!/bin/bash
 set -e
+clear
+echo "🚀 Installation complète de Calyra Dev Stack (Camunda 8 + Appsmith + PostgreSQL + Elasticsearch + Nginx)"
 
-# === 1. Préparation du serveur ===
+# =====================================================
+# 0️⃣ Nettoyage si installation précédente détectée
+# =====================================================
+if [ -d "/opt/calyra" ]; then
+  echo "🧹 Suppression d'une installation existante..."
+  docker compose -f /opt/calyra/docker-compose.yml down || true
+  rm -rf /opt/calyra
+fi
+
+# =====================================================
+# 1️⃣ Préparation du système
+# =====================================================
 echo "🧱 Préparation du serveur..."
-apt update -y && apt upgrade -y
+apt update && apt upgrade -y
 apt install -y curl wget vim git ufw ca-certificates lsb-release gnupg openssl jq
 
-# === 2. Configuration pare-feu UFW (non-interactive) ===
+# Pare-feu
 echo "🛡️ Configuration du pare-feu UFW..."
-yes | ufw reset
+ufw --force reset
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow 22/tcp comment "Allow SSH from anywhere"
 ufw allow from 81.65.164.42 comment "Allow everything from trusted IP"
-yes | ufw enable
+ufw --force enable
 ufw status verbose
 
-# === 3. Installation Docker CE ===
+# =====================================================
+# 2️⃣ Installation Docker CE
+# =====================================================
 echo "🐋 Installation de Docker CE..."
 apt remove -y docker docker-engine docker.io containerd runc || true
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-  https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-  | tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+| tee /etc/apt/sources.list.d/docker.list > /dev/null
 apt update
 apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 systemctl enable --now docker
 
-# === 4. Création arborescence Calyra ===
-echo "📂 Création des dossiers..."
-mkdir -p /opt/calyra/{data/mongo,data/mongo_key,data/postgres,data/redis,data/appsmith-stacks,nginx/conf.d,certs,data/elasticsearch}
+# =====================================================
+# 3️⃣ Arborescence
+# =====================================================
+echo "📂 Création de l’arborescence..."
+mkdir -p /opt/calyra/{data/mongo,data/mongo_key,data/postgres,data/redis,data/appsmith-stacks,nginx/conf.d,certs}
+
 cd /opt/calyra
 
-# === 5. Génération clé MongoDB (auth + replica set) ===
+# =====================================================
+# 4️⃣ Génération clé MongoDB
+# =====================================================
 echo "🔑 Génération de la clé MongoDB..."
 openssl rand -base64 756 > ./data/mongo_key/mongodb-keyfile
 chmod 400 ./data/mongo_key/mongodb-keyfile
 chown 999:999 ./data/mongo_key/mongodb-keyfile
 
-# === 6. Corriger les permissions Elasticsearch (UID 1000) ===
-echo "🔧 Réglage des permissions Elasticsearch..."
-chown -R 1000:1000 ./data/elasticsearch
-chmod -R 775 ./data/elasticsearch
+# =====================================================
+# 5️⃣ docker-compose.yml
+# =====================================================
+echo "🧩 Création du docker-compose.yml..."
 
-# === 7. Génération certificats SSL auto-signés si absents ===
-echo "🔒 Vérification / génération certificats SSL..."
-if [ ! -f "./certs/fullchain.pem" ]; then
-  openssl req -x509 -nodes -newkey rsa:2048 \
-    -keyout ./certs/privkey.pem \
-    -out ./certs/fullchain.pem \
-    -days 365 \
-    -subj "/CN=*.ddns.net/O=CalYra Dev/C=FR"
-fi
-
-# === 8. Configuration Nginx ===
-echo "🧩 Configuration Nginx..."
-cat > ./nginx/conf.d/appsmith.conf <<'EOF'
-server {
-    listen 80;
-    server_name appsmith.ddns.net;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl;
-    server_name appsmith.ddns.net;
-
-    ssl_certificate     /etc/ssl/private/fullchain.pem;
-    ssl_certificate_key /etc/ssl/private/privkey.pem;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
-
-    location / {
-        proxy_pass http://appsmith:80;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_redirect off;
-    }
-}
-EOF
-
-cat > ./nginx/conf.d/camunda.conf <<'EOF'
-server {
-    listen 80;
-    server_name camunda.ddns.net;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl;
-    server_name camunda.ddns.net;
-
-    ssl_certificate     /etc/ssl/private/fullchain.pem;
-    ssl_certificate_key /etc/ssl/private/privkey.pem;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
-
-    location / {
-        proxy_pass http://operate:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_redirect off;
-    }
-}
-EOF
-
-# === 9. Création du docker-compose.yml ===
-echo "⚙️ Création du docker-compose.yml..."
-
-cat > docker-compose.yml <<'EOF'
+cat > docker-compose.yml <<'YAML'
 services:
   postgres:
     image: postgres:15
@@ -173,6 +121,25 @@ services:
     networks:
       - calyra_net
 
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.5
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - network.host=0.0.0.0
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    user: "1000:1000"
+    volumes:
+      - ./data/elasticsearch:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:9200/_cluster/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 50
+    networks:
+      - calyra_net
+
   camunda:
     image: camunda/zeebe:8.8.0
     container_name: camunda
@@ -193,35 +160,25 @@ services:
     networks:
       - calyra_net
 
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.5
-    container_name: elasticsearch
-    user: "1000:1000"
-    environment:
-      - discovery.type=single-node
-      - ES_JAVA_OPTS=-Xms512m -Xmx512m
-      - xpack.security.enabled=false
-      - network.host=0.0.0.0
-      - http.port=9200
-    volumes:
-      - ./data/elasticsearch:/usr/share/elasticsearch/data
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200 || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 50
-    networks:
-      - calyra_net
-
   operate:
     image: camunda/operate:8.8.0
     container_name: operate
-    environment:
-      - CAMUNDA_OPERATE_ZEEBE_GATEWAYADDRESS=camunda:26500
-      - CAMUNDA_DATA_SECONDARY_STORAGE_ELASTICSEARCH_URL=http://elasticsearch:9200
     depends_on:
       elasticsearch:
         condition: service_healthy
+    environment:
+      - CAMUNDA_OPERATE_ELASTICSEARCH_URL=http://elasticsearch:9200
+      - CAMUNDA_OPERATE_ZEEBE_GATEWAYADDRESS=camunda:26500
+      - CAMUNDA_DATA_SECONDARY_STORAGE_ELASTICSEARCH_URL=http://elasticsearch:9200
+    entrypoint: >
+      /bin/sh -c "
+        echo 'Waiting for Elasticsearch...';
+        until wget -q --spider http://elasticsearch:9200; do
+          sleep 5;
+        done;
+        echo 'Elasticsearch ready. Starting Operate...';
+        exec /usr/local/operate/bin/operate;
+      "
     networks:
       - calyra_net
 
@@ -231,11 +188,10 @@ services:
     restart: always
     depends_on:
       - appsmith
-      - camunda
+      - operate
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d
       - ./certs:/etc/ssl/private
-      - ./certs/challenges:/etc/ssl/private/challenges
     ports:
       - "80:80"
       - "443:443"
@@ -245,22 +201,66 @@ services:
 networks:
   calyra_net:
     driver: bridge
-EOF
+YAML
 
-# === 10. Initialisation MongoDB ReplicaSet ===
-echo "🧠 Initialisation du replica set MongoDB..."
-docker compose up -d mongodb
-sleep 15
-docker exec -it mongodb mongosh -u appsmith -p appsmithpass --authenticationDatabase admin --eval '
-rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "mongodb:27017" }] })
-'
-sleep 5
-docker exec -it mongodb mongosh -u appsmith -p appsmithpass --authenticationDatabase admin --eval "rs.status()"
+# =====================================================
+# 6️⃣ Configuration Nginx
+# =====================================================
+echo "🌐 Configuration Nginx..."
 
-# === 11. Lancement complet de la stack ===
-echo "🚀 Lancement de tous les services..."
+cat > nginx/conf.d/appsmith.conf <<'CONF'
+server {
+    listen 80;
+    server_name appsmith.ddns.net;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name appsmith.ddns.net;
+
+    ssl_certificate     /etc/ssl/private/fullchain.pem;
+    ssl_certificate_key /etc/ssl/private/privkey.pem;
+
+    location / {
+        proxy_pass http://appsmith:80/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+CONF
+
+cat > nginx/conf.d/camunda.conf <<'CONF'
+server {
+    listen 80;
+    server_name camunda.ddns.net;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name camunda.ddns.net;
+
+    ssl_certificate     /etc/ssl/private/fullchain.pem;
+    ssl_certificate_key /etc/ssl/private/privkey.pem;
+
+    location / {
+        proxy_pass http://operate:8080/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+CONF
+
+# =====================================================
+# 7️⃣ Démarrage de la stack
+# =====================================================
+echo "🚀 Démarrage de la stack Calyra..."
 docker compose up -d
 
-echo "✅ Installation terminée avec succès !"
-echo "🌐 Appsmith : https://appsmith.ddns.net"
-echo "🌐 Camunda Operate : https://camunda.ddns.net"
+echo "✅ Installation terminée."
+echo "🌐 Accès :"
+echo "   - Appsmith : https://appsmith.ddns.net/"
+echo "   - Camunda Operate : https://camunda.ddns.net/"
