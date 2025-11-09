@@ -21,10 +21,10 @@ apt install -y curl wget vim git ufw ca-certificates lsb-release gnupg openssl j
 # === 2. Configuration pare-feu UFW (non-interactive) ===
 echo "🛡️ Configuration du pare-feu UFW..."
 yes | ufw reset
-ufw --force default deny incoming
-ufw --force default allow outgoing
-ufw --force allow 22/tcp comment "Allow SSH from anywhere"
-ufw --force allow from 81.65.164.42 comment "Allow everything from trusted IP"
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp comment "Allow SSH from anywhere"
+ufw allow from 81.65.164.42 comment "Allow everything from trusted IP"
 yes | ufw enable
 ufw status verbose
 
