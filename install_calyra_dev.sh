@@ -1,14 +1,24 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Installation complète de la stack Calyra (Camunda 8.8 + Appsmith + PostgreSQL + Redis + MongoDB + Nginx + Elasticsearch 8.19.5)"
+echo "⚠️  Nettoyage de toute installation existante de Calyra..."
+
+# Arrêter et supprimer containers + volumes + réseau existants
+if [ -d "/opt/calyra" ]; then
+  cd /opt/calyra || exit 1
+  if [ -f "docker-compose.yml" ]; then
+    docker compose down -v || true
+  fi
+  cd /opt
+  rm -rf /opt/calyra
+fi
 
 # === 1. Préparation du serveur ===
 echo "🧱 Préparation du serveur..."
 apt update -y && apt upgrade -y
 apt install -y curl wget vim git ufw ca-certificates lsb-release gnupg openssl jq
 
-# === 2. Configuration pare-feu UFW ===
+# === 2. Configuration pare-feu UFW (non-interactive) ===
 echo "🛡️ Configuration du pare-feu UFW..."
 yes | ufw reset
 ufw --force default deny incoming
@@ -263,7 +273,7 @@ docker exec -it mongodb mongosh -u appsmith -p appsmithpass --authenticationData
 echo "🚀 Lancement de tous les services..."
 docker compose up -d
 
-echo "✅ Installation terminée !"
-echo "➡️ Appsmith : https://appsmith.ddns.net"
-echo "➡️ Camunda Operate : https://camunda.ddns.net"
+echo "✅ Installation terminée avec succès !"
+echo "🌐 Appsmith : https://appsmith.ddns.net"
+echo "🌐 Camunda Operate : https://camunda.ddns.net"
 
