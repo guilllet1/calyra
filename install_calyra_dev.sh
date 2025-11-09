@@ -253,6 +253,12 @@ docker exec -it mongodb mongosh -u appsmith -p appsmithpass --authenticationData
 sleep 5
 
 # === Lancement Stack ===
+echo "🧹 Nettoyage et correction des permissions Elasticsearch..."
+rm -rf /opt/calyra/data/elasticsearch/nodes
+mkdir -p /opt/calyra/data/elasticsearch
+chown -R 1000:1000 /opt/calyra/data/elasticsearch
+chmod -R 775 /opt/calyra/data/elasticsearch
+
 echo "🚀 Lancement complet de la stack..."
 docker compose up -d
 
