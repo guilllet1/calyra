@@ -1,18 +1,6 @@
 #!/bin/bash
 set -e
 
-echo "⚠️  Nettoyage de toute installation existante de Calyra..."
-
-# Arrêter et supprimer containers + volumes + réseau existants
-if [ -d "/opt/calyra" ]; then
-  cd /opt/calyra || exit 1
-  if [ -f "docker-compose.yml" ]; then
-    docker compose down -v || true
-  fi
-  cd /opt
-  rm -rf /opt/calyra
-fi
-
 # === 1. Préparation du serveur ===
 echo "🧱 Préparation du serveur..."
 apt update -y && apt upgrade -y
