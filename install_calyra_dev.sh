@@ -47,8 +47,76 @@ echo "🔧 Réglage des permissions Elasticsearch..."
 chown -R 1000:1000 ./data/elasticsearch
 chmod -R 775 ./data/elasticsearch
 
-# === 7. Création du fichier docker-compose.yml ===
-echo "⚙️ Création du fichier docker-compose.yml..."
+# === 7. Génération certificats SSL auto-signés si absents ===
+echo "🔒 Vérification / génération certificats SSL..."
+if [ ! -f "./certs/fullchain.pem" ]; then
+  openssl req -x509 -nodes -newkey rsa:2048 \
+    -keyout ./certs/privkey.pem \
+    -out ./certs/fullchain.pem \
+    -days 365 \
+    -subj "/CN=*.ddns.net/O=CalYra Dev/C=FR"
+fi
+
+# === 8. Configuration Nginx ===
+echo "🧩 Configuration Nginx..."
+cat > ./nginx/conf.d/appsmith.conf <<'EOF'
+server {
+    listen 80;
+    server_name appsmith.ddns.net;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name appsmith.ddns.net;
+
+    ssl_certificate     /etc/ssl/private/fullchain.pem;
+    ssl_certificate_key /etc/ssl/private/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    location / {
+        proxy_pass http://appsmith:80;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
+    }
+}
+EOF
+
+cat > ./nginx/conf.d/camunda.conf <<'EOF'
+server {
+    listen 80;
+    server_name camunda.ddns.net;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name camunda.ddns.net;
+
+    ssl_certificate     /etc/ssl/private/fullchain.pem;
+    ssl_certificate_key /etc/ssl/private/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    location / {
+        proxy_pass http://operate:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
+    }
+}
+EOF
+
+# === 9. Création du docker-compose.yml ===
+echo "⚙️ Création du docker-compose.yml..."
 
 cat > docker-compose.yml <<'EOF'
 services:
@@ -130,6 +198,7 @@ services:
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.19.5
     container_name: elasticsearch
+    user: "1000:1000"
     environment:
       - discovery.type=single-node
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
@@ -180,7 +249,7 @@ networks:
     driver: bridge
 EOF
 
-# === 8. Démarrage MongoDB et initialisation ReplicaSet ===
+# === 10. Initialisation MongoDB ReplicaSet ===
 echo "🧠 Initialisation du replica set MongoDB..."
 docker compose up -d mongodb
 sleep 15
@@ -190,7 +259,7 @@ rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "mongodb:27017" }] })
 sleep 5
 docker exec -it mongodb mongosh -u appsmith -p appsmithpass --authenticationDatabase admin --eval "rs.status()"
 
-# === 9. Lancement complet de la stack ===
+# === 11. Lancement complet de la stack ===
 echo "🚀 Lancement de tous les services..."
 docker compose up -d
 
