@@ -3,12 +3,32 @@ set -e
 clear
 echo "🚀 Installation complète de Calyra Dev Stack (Camunda 8 + Appsmith + PostgreSQL + Elasticsearch + Nginx)"
 
+# Fonction pour générer un mot de passe aléatoire si non défini
+generate_password() {
+  openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 20
+}
+
+# Définir les mots de passe (utiliser des vars d'env si possible, sinon générer)
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(generate_password)}"
+MONGODB_PASSWORD="${MONGODB_PASSWORD:-$(generate_password)}"
+echo "🔑 Mots de passe générés (sauvegardez-les) :"
+echo "   - PostgreSQL : $POSTGRES_PASSWORD"
+echo "   - MongoDB : $MONGODB_PASSWORD"
+
 # =====================================================
 # 0️⃣ Nettoyage si installation précédente détectée
 # =====================================================
 if [ -d "/opt/calyra" ]; then
-  echo "🧹 Suppression d'une installation existante..."
-  docker compose -f /opt/calyra/docker-compose.yml down || true
+  echo "🧹 Une installation existante a été détectée. Souhaitez-vous la supprimer ? (y/n)"
+  read -r confirm
+  if [[ $confirm =~ ^[Yy]$ ]]; then
+    docker compose -f /opt/calyra/docker-compose.yml down -v || true  # -v pour supprimer les volumes si nécessaire
+    find /opt/calyra/ -mindepth 1 -maxdepth 1 -not -path '/opt/calyra/certs*' -exec rm -rf {} +
+    echo "🧹 Installation précédente supprimée."
+  else
+    echo "❌ Installation annulée."
+    exit 0
+  fi
 fi
 
 # =====================================================
@@ -69,80 +89,90 @@ fi
 # =====================================================
 echo "🐋 Installation de Docker CE..."
 
-# Vérifier et supprimer les paquets existants seulement si nécessaire
-if dpkg -l | grep -q docker; then
-    apt remove -y docker docker-engine docker.io containerd runc || true
+if command -v docker >/dev/null 2>&1 && docker --version >/dev/null 2>&1 && systemctl is-active --quiet docker; then
+    echo "🐋 Docker est déjà installé et en cours d'exécution. Installation sautée."
 else
-    echo "Aucun paquet Docker existant à supprimer."
-fi
+    # Vérifier et supprimer les paquets existants seulement si nécessaire
+    if dpkg -l | grep -q docker; then
+        apt remove -y docker docker-engine docker.io containerd runc || true
+    else
+        echo "Aucun paquet Docker existant à supprimer."
+    fi
 
-# Créer le répertoire des clés si nécessaire
-if [ ! -d /etc/apt/keyrings ]; then
-    mkdir -p /etc/apt/keyrings
-else
-    echo "Répertoire /etc/apt/keyrings existe déjà."
-fi
+    # Créer le répertoire des clés si nécessaire
+    if [ ! -d /etc/apt/keyrings ]; then
+        mkdir -p /etc/apt/keyrings
+    else
+        echo "Répertoire /etc/apt/keyrings existe déjà."
+    fi
 
-# Ajouter la clé GPG seulement si elle n'existe pas
-if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-else
-    echo "Clé GPG Docker existe déjà."
-fi
+    # Ajouter la clé GPG seulement si elle n'existe pas
+    if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    else
+        echo "Clé GPG Docker existe déjà."
+    fi
 
-# Ajouter le dépôt APT seulement si le fichier n'existe pas
-if [ ! -f /etc/apt/sources.list.d/docker.list ]; then
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-    https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-    | tee /etc/apt/sources.list.d/docker.list > /dev/null
-else
-    echo "Fichier de dépôt Docker existe déjà."
-fi
+    # Ajouter le dépôt APT seulement si le fichier n'existe pas
+    if [ ! -f /etc/apt/sources.list.d/docker.list ]; then
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+        https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+        | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    else
+        echo "Fichier de dépôt Docker existe déjà."
+    fi
 
-# Mettre à jour APT (toujours safe, mais on peut vérifier si nécessaire)
-apt update
+    # Mettre à jour APT
+    apt update
 
-# Installer les paquets seulement si Docker n'est pas installé
-if ! command -v docker >/dev/null 2>&1; then
+    # Installer les paquets
     apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-else
-    echo "Paquets Docker déjà installés."
-fi
 
-# Activer le service seulement s'il n'est pas déjà enabled/active
-if ! systemctl is-enabled --quiet docker; then
+    # Activer le service
     systemctl enable --now docker
-else
-    echo "Service Docker déjà activé."
 fi
 
 # =====================================================
 # 3️⃣ Arborescence
 # =====================================================
 echo "📂 Création de l’arborescence..."
-mkdir -p /opt/calyra/{data/mongo,data/mongo_key,data/postgres,data/redis,data/appsmith-stacks,nginx/conf.d,certs}
+mkdir -p /opt/calyra/{data/mongo,data/mongo_key,data/postgres,data/redis,data/appsmith-stacks,nginx/conf.d,nginx/html,certs,live/appsmith.ddns.net}
 
 cd /opt/calyra
-echo "📂 Supprimer le répertoire de données corrompu ..."
-rm -rf ./data/elasticsearch
+
+# Permissions pour les volumes (adaptées aux images Docker)
 mkdir -p ./data/elasticsearch
-chown -R 1000:1000 ./data/elasticsearch
+chown -R 1000:1000 ./data/elasticsearch  # Pour Elasticsearch
 chmod -R 775 ./data/elasticsearch
+
+mkdir -p ./data/postgres
+chown -R 70:70 ./data/postgres  # UID pour postgres dans l'image PostgreSQL est souvent 70 ou 999, mais 70 est courant pour postgres:15
+
+mkdir -p ./data/redis
+chown -R 999:999 ./data/redis  # Pour Redis
+
+mkdir -p ./data/mongo
+chown -R 999:999 ./data/mongo  # Pour MongoDB
 
 # =====================================================
 # 4️ Génération clé MongoDB
 # =====================================================
 echo "🔑 Génération de la clé MongoDB..."
-openssl rand -base64 756 > ./data/mongo_key/mongodb-keyfile
-chmod 400 ./data/mongo_key/mongodb-keyfile
-chown 999:999 ./data/mongo_key/mongodb-keyfile
+KEYFILE="./data/mongo_key/mongodb-keyfile"
+if [ ! -f "$KEYFILE" ]; then
+  openssl rand -base64 756 > "$KEYFILE"
+  chmod 400 "$KEYFILE"
+  chown 999:999 "$KEYFILE"
+else
+  echo "🔑 Clé MongoDB existe déjà. Génération sautée."
+fi
 
 # =====================================================
 # 5 Génération des certificats
 # =====================================================
 echo "🔏 Génération des certificats Let's Encrypt..."
-echo "🔐 Vérification des certificats SSL pour appsmith.ddns.net..."
-CERT_PATH="/opt/calyra/certs/live/appsmith.ddns.net"
+echo "🔐 Vérification des certificats SSL pour appsmith.ddns.net et camunda.ddns.net..."
+CERT_PATH="/opt/calyra/certs/live/appsmith.ddns.net"  # Utiliser un dossier commun, mais cert multi-domaines
 FULLCHAIN="$CERT_PATH/fullchain.pem"
 PRIVKEY="$CERT_PATH/privkey.pem"
 
@@ -157,12 +187,12 @@ else
   chown -R root:root /opt/calyra/certs  # Assurer des permissions sécurisées
   chmod 700 /opt/calyra/certs
 
-  # Créer un fichier de configuration temporaire pour Nginx
+  # Créer un fichier de configuration temporaire pour Nginx (ajuster pour multi-domaines si besoin)
   TEMP_CONF="/opt/calyra/nginx/conf.d/temp-certbot.conf"
   cat > "$TEMP_CONF" <<'CONF'
 server {
     listen 80;
-    server_name appsmith.ddns.net;
+    server_name appsmith.ddns.net camunda.ddns.net;
 
     # Répertoire utilisé par Certbot pour le challenge
     root /usr/share/nginx/html;
@@ -196,16 +226,16 @@ CONF
     -v /opt/calyra/nginx/html:/usr/share/nginx/html:ro \
     nginx:latest || { echo "❌ Échec du lancement de Nginx temporaire."; exit 1; }
 
-  # Attendre que Nginx soit prêt (optionnel, mais utile pour la robustesse)
+  # Attendre que Nginx soit prêt
   sleep 5
 
-  # Lancer Certbot pour obtenir les certificats
+  # Lancer Certbot pour obtenir les certificats (ajouter les deux domaines)
   docker run -it --rm \
     -v /opt/calyra/certs:/etc/letsencrypt \
     -v /opt/calyra/nginx/html:/usr/share/nginx/html \
     certbot/certbot certonly --webroot \
     -w /usr/share/nginx/html \
-    -d appsmith.ddns.net \
+    -d appsmith.ddns.net -d camunda.ddns.net \
     --agree-tos --no-eff-email -m admin@appsmith.ddns.net || { echo "❌ Échec de la génération des certificats."; docker stop nginx-temp; docker rm nginx-temp; exit 1; }
 
   # Arrêter et supprimer le conteneur Nginx temporaire
@@ -235,8 +265,9 @@ fi
 # 6 docker-compose.yml
 # =====================================================
 echo "🧩 Création du docker-compose.yml..."
-
-cat > docker-compose.yml <<'YAML'
+COMPOSE_FILE="docker-compose.yml"
+if [ ! -f "$COMPOSE_FILE" ]; then
+  cat > "$COMPOSE_FILE" <<'YAML'
 services:
   postgres:
     image: postgres:15
@@ -250,6 +281,11 @@ services:
       - ./data/postgres:/var/lib/postgresql/data
     networks:
       - calyra_net
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "camunda"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7
@@ -259,6 +295,11 @@ services:
       - ./data/redis:/data
     networks:
       - calyra_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   mongodb:
     image: mongo:6
@@ -273,14 +314,21 @@ services:
       - ./data/mongo_key:/data/key
     networks:
       - calyra_net
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh -u appsmith -p appsmithpass --authenticationDatabase admin --quiet --eval 'try { rs.status() } catch (e) { quit(1) }; quit(0)'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10  # Plus de retries pour donner du temps à l'init
 
   appsmith:
     image: appsmith/appsmith-ce
     container_name: appsmith
     restart: always
     depends_on:
-      - redis
-      - mongodb
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
     environment:
       - APPSMITH_REDIS_URL=redis://redis:6379
       - APPSMITH_MONGODB_URI=mongodb://appsmith:appsmithpass@mongodb:27017/appsmith?authSource=admin&replicaSet=rs0
@@ -292,9 +340,14 @@ services:
       - ./data/appsmith-stacks:/appsmith-stacks
     networks:
       - calyra_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "localhost:80"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.5
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0  # Aligné avec Camunda version
     container_name: elasticsearch
     environment:
       - discovery.type=single-node
@@ -328,15 +381,25 @@ services:
       - SPRING_DATASOURCE_USERNAME=camunda
       - SPRING_DATASOURCE_PASSWORD=camundapass
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
     networks:
       - calyra_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "localhost:26500"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   operate:
     image: camunda/operate:8.8.0
     container_name: operate
     depends_on:
       elasticsearch:
+        condition: service_healthy
+      camunda:
         condition: service_healthy
     environment:
       - CAMUNDA_OPERATE_ELASTICSEARCH_URL=http://elasticsearch:9200
@@ -353,14 +416,21 @@ services:
       "
     networks:
       - calyra_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "localhost:8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   nginx:
     image: nginx:latest
     container_name: nginx
     restart: always
     depends_on:
-      - appsmith
-      - operate
+      appsmith:
+        condition: service_healthy
+      operate:
+        condition: service_healthy
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d
       - ./certs:/etc/ssl/private
@@ -369,18 +439,35 @@ services:
       - "443:443"
     networks:
       - calyra_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 networks:
   calyra_net:
     driver: bridge
 YAML
+else
+  echo "🧩 docker-compose.yml existe déjà. Création sautée."
+fi
+
+# Remplacer les mots de passe dans docker-compose.yml (si générés)
+sed -i "s/POSTGRES_PASSWORD: camundapass/POSTGRES_PASSWORD: $POSTGRES_PASSWORD/g" "$COMPOSE_FILE"
+sed -i "s/MONGO_INITDB_ROOT_PASSWORD: appsmithpass/MONGO_INITDB_ROOT_PASSWORD: $MONGODB_PASSWORD/g" "$COMPOSE_FILE"
+sed -i "s/APPSMITH_MONGODB_URI=mongodb:\/\/appsmith:appsmithpass@mongodb:27017\/appsmith?authSource=admin&replicaSet=rs0/APPSMITH_MONGODB_URI=mongodb:\/\/appsmith:$MONGODB_PASSWORD@mongodb:27017\/appsmith?authSource=admin&replicaSet=rs0/g" "$COMPOSE_FILE"
+sed -i "s/SPRING_DATASOURCE_PASSWORD=camundapass/SPRING_DATASOURCE_PASSWORD=$POSTGRES_PASSWORD/g" "$COMPOSE_FILE"
+sed -i "s/-p appsmithpass/-p $MONGODB_PASSWORD/g" "$COMPOSE_FILE"  # Remplacer dans le healthcheck de MongoDB
 
 # =====================================================
 # 7 Configuration Nginx
 # =====================================================
 echo "🌐 Configuration Nginx..."
 
-cat > nginx/conf.d/appsmith.conf <<'CONF'
+APPSMITH_CONF="nginx/conf.d/appsmith.conf"
+if [ ! -f "$APPSMITH_CONF" ]; then
+  cat > "$APPSMITH_CONF" <<'CONF'
 server {
     listen 80;
     server_name appsmith.ddns.net;
@@ -408,8 +495,13 @@ server {
     }
 }
 CONF
+else
+  echo "🌐 appsmith.conf existe déjà."
+fi
 
-cat > nginx/conf.d/camunda.conf <<'CONF'
+CAMUNDA_CONF="nginx/conf.d/camunda.conf"
+if [ ! -f "$CAMUNDA_CONF" ]; then
+  cat > "$CAMUNDA_CONF" <<'CONF'
 server {
     listen 80;
     server_name camunda.ddns.net;
@@ -437,20 +529,26 @@ server {
     }
 }
 CONF
+else
+  echo "🌐 camunda.conf existe déjà."
+fi
 
 # === Initialisation MongoDB Replica Set ===
 echo "🧠 Initialisation du replica set MongoDB..."
 docker compose up -d mongodb
-sleep 10
-docker exec -it mongodb mongosh -u appsmith -p appsmithpass --authenticationDatabase admin --eval \
-'rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "mongodb:27017" }] })' || true
-sleep 5
+until docker exec -it mongodb mongosh -u appsmith -p "$MONGODB_PASSWORD" --authenticationDatabase admin --quiet --eval "db.adminCommand('ping')" > /dev/null 2>&1; do
+  echo "Attente de MongoDB pour devenir responsive..."
+  sleep 5
+done
+docker exec -it mongodb mongosh -u appsmith -p "$MONGODB_PASSWORD" --authenticationDatabase admin --eval \
+"try { rs.status() } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongodb:27017' }] }) }" || true
+sleep 10  # Donner du temps pour que le replica set devienne primary
 
 # =====================================================
 # 8 Démarrage de la stack
 # =====================================================
 echo "🚀 Démarrage de la stack Calyra..."
-docker compose up -d
+docker compose up -d --wait  # --wait pour attendre que tous les services soient healthy
 
 echo "✅ Installation terminée."
 echo "🌐 Accès :"
