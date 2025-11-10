@@ -95,8 +95,15 @@ docker run -it --rm \
   -w /usr/share/nginx/html \
   -d appsmith.ddns.net \
   --agree-tos --no-eff-email -m admin@appsmith.ddns.net
+docker run -it --rm \
+  -v /opt/calyra/certs:/etc/letsencrypt \
+  -v /opt/calyra/nginx/html:/usr/share/nginx/html \
+  certbot/certbot certonly --webroot \
+  -w /usr/share/nginx/html \
+  -d camunda.ddns.net \
+  --agree-tos --no-eff-email -m admin@camunda.ddns.net
 docker stop nginx-temp && docker rm nginx-temp
-ls -l /opt/calyra/certs/live/appsmith.ddns.net/
+ls -l /opt/calyra/certs/live/camunda.ddns.net/
   
 # =====================================================
 # 6 docker-compose.yml
@@ -287,8 +294,8 @@ server {
     listen 443 ssl;
     server_name camunda.ddns.net;
 
-    ssl_certificate     /etc/ssl/private/live/appsmith.ddns.net/fullchain.pem;
-    ssl_certificate_key /etc/ssl/private/live/appsmith.ddns.net/privkey.pem;
+    ssl_certificate     /etc/ssl/private/live/camunda.ddns.net/fullchain.pem;
+    ssl_certificate_key /etc/ssl/private/live/camunda.ddns.net/privkey.pem;
 
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         HIGH:!aNULL:!MD5;
