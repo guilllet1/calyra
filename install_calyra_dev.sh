@@ -50,6 +50,11 @@ echo "📂 Création de l’arborescence..."
 mkdir -p /opt/calyra/{data/mongo,data/mongo_key,data/postgres,data/redis,data/appsmith-stacks,nginx/conf.d,certs}
 
 cd /opt/calyra
+echo "📂 Supprimer le répertoire de données corrompu ..."
+rm -rf ./data/elasticsearch
+mkdir -p ./data/elasticsearch
+chown -R 1000:1000 ./data/elasticsearch
+chmod -R 775 ./data/elasticsearch
 
 # =====================================================
 # 4️ Génération clé MongoDB
