@@ -18,7 +18,9 @@ echo "🧱 Préparation du serveur..."
 apt update && apt upgrade -y
 apt install -y curl wget vim git ufw ca-certificates lsb-release gnupg openssl jq
 
-# Pare-feu
+# =====================================================
+# 2 Configuration du pare-feu
+# =====================================================
 echo "🛡️ Configuration du pare-feu UFW..."
 
 # Vérifier si UFW est installé ; l'installer si nécessaire
