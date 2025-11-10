@@ -1,12 +1,7 @@
 #!/bin/bash
 set -e
 clear
-echo "🚀 Installation complète de Calyra Dev Stack (Camunda 8 + Appsmith + PostgreSQL + Elasticsearch + Nginx)"
-
-# Fonction pour générer un mot de passe aléatoire si non défini
-generate_password() {
-  openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 20
-}
+echo "🚀 Installation complète de Calyra Dev Stack"
 
 # =====================================================
 # 🔧 Chargement du fichier de configuration (obligatoire)
