@@ -140,9 +140,6 @@ chown 999:999 ./data/mongo_key/mongodb-keyfile
 # =====================================================
 # 5 Génération des certificats
 # =====================================================
-# =====================================================
-# 5 Génération des certificats
-# =====================================================
 echo "🔏 Génération des certificats Let's Encrypt..."
 echo "🔐 Vérification des certificats SSL pour appsmith.ddns.net..."
 CERT_PATH="/opt/calyra/certs/live/appsmith.ddns.net"
@@ -188,6 +185,9 @@ CONF
     ufw allow 80/tcp comment "Temporary for Certbot"
     ufw reload
   fi
+
+  # Supprimer le conteneur nginx-temp s'il existe déjà (pour éviter les conflits)
+  docker rm -f nginx-temp >/dev/null 2>&1 || true
 
   # Lancer le conteneur Nginx temporaire
   docker run -d --name nginx-temp \
