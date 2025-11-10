@@ -103,8 +103,9 @@ docker run -it --rm \
   -d camunda.ddns.net \
   --agree-tos --no-eff-email -m admin@camunda.ddns.net
 docker stop nginx-temp && docker rm nginx-temp
+ls -l /opt/calyra/certs/live/appsmith.ddns.net/
 ls -l /opt/calyra/certs/live/camunda.ddns.net/
-  
+
 # =====================================================
 # 6 docker-compose.yml
 # =====================================================
