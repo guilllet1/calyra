@@ -20,27 +20,99 @@ apt install -y curl wget vim git ufw ca-certificates lsb-release gnupg openssl j
 
 # Pare-feu
 echo "🛡️ Configuration du pare-feu UFW..."
-ufw --force reset
-ufw default deny incoming
-ufw default allow outgoing
-ufw allow 22/tcp comment "Allow SSH from anywhere"
-ufw allow from 81.65.164.42 comment "Allow everything from trusted IP"
-ufw --force enable
-ufw status verbose
+
+# Vérifier si UFW est installé ; l'installer si nécessaire
+if ! command -v ufw >/dev/null 2>&1; then
+    apt update
+    apt install -y ufw
+else
+    echo "UFW est déjà installé."
+fi
+
+# Vérifier si UFW est déjà activé et configuré comme souhaité
+ufw_status=$(ufw status verbose 2>/dev/null)
+
+# Fonction pour vérifier les politiques par défaut
+check_defaults() {
+    echo "$ufw_status" | grep -q "Default: deny (incoming), allow (outgoing)"
+}
+
+# Fonction pour vérifier la règle SSH (port 22/tcp allow from anywhere)
+check_ssh_rule() {
+    echo "$ufw_status" | grep -q "22/tcp *ALLOW IN *Anywhere"
+}
+
+# Fonction pour vérifier la règle IP spécifique (allow from 81.65.164.42)
+check_ip_rule() {
+    echo "$ufw_status" | grep -q "Anywhere *ALLOW IN *81.65.164.42"
+}
+
+# Vérification globale
+if ufw status | grep -q "Status: active" && check_defaults && check_ssh_rule && check_ip_rule; then
+    echo "🛡️ Le pare-feu UFW est déjà configuré comme souhaité. Configuration sautée."
+    ufw status verbose  # Afficher le statut pour confirmation
+else
+    # Procéder à la configuration si pas déjà OK
+    ufw --force reset  # Attention : cela efface les règles existantes, utilisez avec prudence !
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw allow 22/tcp comment "Allow SSH from anywhere"
+    ufw allow from 81.65.164.42 comment "Allow everything from trusted IP"
+    ufw --force enable
+    ufw status verbose
+fi
 
 # =====================================================
 # 2️⃣ Installation Docker CE
 # =====================================================
 echo "🐋 Installation de Docker CE..."
-apt remove -y docker docker-engine docker.io containerd runc || true
-mkdir -p /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-| tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Vérifier et supprimer les paquets existants seulement si nécessaire
+if dpkg -l | grep -q docker; then
+    apt remove -y docker docker-engine docker.io containerd runc || true
+else
+    echo "Aucun paquet Docker existant à supprimer."
+fi
+
+# Créer le répertoire des clés si nécessaire
+if [ ! -d /etc/apt/keyrings ]; then
+    mkdir -p /etc/apt/keyrings
+else
+    echo "Répertoire /etc/apt/keyrings existe déjà."
+fi
+
+# Ajouter la clé GPG seulement si elle n'existe pas
+if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+else
+    echo "Clé GPG Docker existe déjà."
+fi
+
+# Ajouter le dépôt APT seulement si le fichier n'existe pas
+if [ ! -f /etc/apt/sources.list.d/docker.list ]; then
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+    https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+    | tee /etc/apt/sources.list.d/docker.list > /dev/null
+else
+    echo "Fichier de dépôt Docker existe déjà."
+fi
+
+# Mettre à jour APT (toujours safe, mais on peut vérifier si nécessaire)
 apt update
-apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-systemctl enable --now docker
+
+# Installer les paquets seulement si Docker n'est pas installé
+if ! command -v docker >/dev/null 2>&1; then
+    apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+else
+    echo "Paquets Docker déjà installés."
+fi
+
+# Activer le service seulement s'il n'est pas déjà enabled/active
+if ! systemctl is-enabled --quiet docker; then
+    systemctl enable --now docker
+else
+    echo "Service Docker déjà activé."
+fi
 
 # =====================================================
 # 3️⃣ Arborescence
