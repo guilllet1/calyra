@@ -8,28 +8,90 @@ generate_password() {
   openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 20
 }
 
-# Définir les mots de passe (utiliser des vars d'env si possible, sinon générer)
-POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(generate_password)}"
-MONGODB_PASSWORD="${MONGODB_PASSWORD:-$(generate_password)}"
-echo "🔑 Mots de passe générés (sauvegardez-les) :"
+# =====================================================
+# 🔧 Chargement du fichier de configuration (obligatoire)
+# =====================================================
+
+# Déterminer le chemin absolu du script et du fichier config associé
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="$SCRIPT_DIR/config.env"
+
+# Vérifier la présence du fichier config.env
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "❌ Fichier de configuration manquant : $CONFIG_FILE"
+  echo "👉 Créez un fichier config.env dans le même répertoire que ce script, contenant par exemple :"
+  echo ""
+  echo "POSTGRES_PASSWORD=monMotDePassePostgres"
+  echo "MONGODB_PASSWORD=monMotDePasseMongo"
+  echo ""
+  echo "Arrêt de l'installation."
+  exit 1
+fi
+
+# Charger les variables depuis config.env
+echo "⚙️ Chargement de la configuration depuis : $CONFIG_FILE"
+set -a
+source "$CONFIG_FILE"
+set +a
+
+# Vérification des valeurs nécessaires
+if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$MONGODB_PASSWORD" ]; then
+  echo "❌ Les variables POSTGRES_PASSWORD et/ou MONGODB_PASSWORD sont absentes dans $CONFIG_FILE"
+  echo "👉 Exemple attendu :"
+  echo "POSTGRES_PASSWORD=motdepassePostgres"
+  echo "MONGODB_PASSWORD=motdepasseMongo"
+  exit 1
+fi
+
+echo "🔑 Mots de passe chargés :"
 echo "   - PostgreSQL : $POSTGRES_PASSWORD"
 echo "   - MongoDB : $MONGODB_PASSWORD"
+
+
 
 # =====================================================
 # 0️⃣ Nettoyage si installation précédente détectée
 # =====================================================
 if [ -d "/opt/calyra" ]; then
-  echo "🧹 Une installation existante a été détectée. Souhaitez-vous la supprimer ? (y/n)"
+  echo "🧹 Une installation existante a été détectée."
+
+  # Vérifier si les bases PostgreSQL et MongoDB existent
+  PG_VOLUME="/opt/calyra/data/postgres"
+  MONGO_VOLUME="/opt/calyra/data/mongo"
+
+  PG_EXISTS=$(docker ps -a --format '{{.Names}}' | grep -c '^postgres$' || true)
+  MONGO_EXISTS=$(docker ps -a --format '{{.Names}}' | grep -c '^mongodb$' || true)
+  DB_PRESERVE=false
+
+  if [[ -d "$PG_VOLUME" || -d "$MONGO_VOLUME" || $PG_EXISTS -gt 0 || $MONGO_EXISTS -gt 0 ]]; then
+    echo "🛑 Des bases de données existantes ont été détectées."
+    echo "   👉 Elles ne seront PAS supprimées."
+    DB_PRESERVE=true
+  fi
+
+  echo "Souhaitez-vous réinitialiser l’installation (hors bases de données) ? (y/n)"
   read -r confirm
   if [[ $confirm =~ ^[Yy]$ ]]; then
-    docker compose -f /opt/calyra/docker-compose.yml down -v || true  # -v pour supprimer les volumes si nécessaire
-    find /opt/calyra/ -mindepth 1 -maxdepth 1 -not -path '/opt/calyra/certs*' -exec rm -rf {} +
-    echo "🧹 Installation précédente supprimée."
+    echo "🧹 Nettoyage des services Docker (sauf bases de données)..."
+    docker compose -f /opt/calyra/docker-compose.yml down || true
+
+    if [ "$DB_PRESERVE" = true ]; then
+      find /opt/calyra/ -mindepth 1 -maxdepth 1 \
+        -not -path '/opt/calyra/certs*' \
+        -not -path '/opt/calyra/data/postgres*' \
+        -not -path '/opt/calyra/data/mongo*' \
+        -exec rm -rf {} +
+    else
+      find /opt/calyra/ -mindepth 1 -maxdepth 1 -not -path '/opt/calyra/certs*' -exec rm -rf {} +
+    fi
+
+    echo "✅ Nettoyage terminé (bases préservées si existantes)."
   else
     echo "❌ Installation annulée."
     exit 0
   fi
 fi
+
 
 # =====================================================
 # 3️⃣ Arborescence
@@ -315,6 +377,22 @@ services:
       retries: 30
       start_period: 120s
 
+  adminer:
+    image: adminer
+    container_name: adminer
+    restart: always
+    depends_on:
+      - postgres
+    environment:
+      - ADMINER_DEFAULT_SERVER=postgres
+    networks:
+      - calyra_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080 || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
   nginx:
     image: nginx:latest
     container_name: nginx
@@ -425,6 +503,40 @@ server {
 CONF
 else
   echo "🌐 camunda.conf existe déjà."
+fi
+
+ADMINER_CONF="nginx/conf.d/adminer.conf"
+if [ ! -f "$ADMINER_CONF" ]; then
+  cat > "$ADMINER_CONF" <<'CONF'
+server {
+    listen 80;
+    server_name adminera.ddns.net;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name adminera.ddns.net;
+
+    ssl_certificate     /etc/ssl/private/live/appsmith.ddns.net/fullchain.pem;
+    ssl_certificate_key /etc/ssl/private/live/appsmith.ddns.net/privkey.pem;
+
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    location / {
+        proxy_pass http://adminer:8080/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
+    }
+}
+CONF
+else
+  echo "🌐 adminer.conf existe déjà."
 fi
 
 # === Initialisation MongoDB Replica Set ===
