@@ -140,9 +140,11 @@ chown 999:999 ./data/mongo_key/mongodb-keyfile
 # =====================================================
 # 5 Génération des certificats
 # =====================================================
+# =====================================================
+# 5 Génération des certificats
+# =====================================================
 echo "🔏 Génération des certificats Let's Encrypt..."
 echo "🔐 Vérification des certificats SSL pour appsmith.ddns.net..."
-
 CERT_PATH="/opt/calyra/certs/live/appsmith.ddns.net"
 FULLCHAIN="$CERT_PATH/fullchain.pem"
 PRIVKEY="$CERT_PATH/privkey.pem"
@@ -150,42 +152,83 @@ PRIVKEY="$CERT_PATH/privkey.pem"
 if [[ -f "$FULLCHAIN" && -f "$PRIVKEY" ]]; then
   echo "✅ Certificats SSL déjà présents, aucune régénération nécessaire."
 else
-  echo "⚙️  Aucun certificat trouvé — génération avec Certbot..."
+  echo "⚙️ Aucun certificat trouvé — génération avec Certbot..."
+
+  # Assurer que les répertoires existent et ont les bonnes permissions
   mkdir -p /opt/calyra/nginx/html/.well-known/acme-challenge
-  cat > /opt/calyra/nginx/conf.d/temp-certbot.conf <<'CONF'
-  server {
-      listen 80;
-      server_name appsmith.ddns.net;
-  
-      # Répertoire utilisé par Certbot pour le challenge
-      root /usr/share/nginx/html;
-  
-      location /.well-known/acme-challenge/ {
-          allow all;
-      }
-  
-      # Réponse par défaut pour tout le reste
-      location / {
-          return 200 'Temporary Nginx running for Certbot validation\n';
-          add_header Content-Type text/plain;
-      }
-  }
-  CONF
+  mkdir -p /opt/calyra/certs
+  chown -R root:root /opt/calyra/certs  # Assurer des permissions sécurisées
+  chmod 700 /opt/calyra/certs
+
+  # Créer un fichier de configuration temporaire pour Nginx
+  TEMP_CONF="/opt/calyra/nginx/conf.d/temp-certbot.conf"
+  cat > "$TEMP_CONF" <<'CONF'
+server {
+    listen 80;
+    server_name appsmith.ddns.net;
+
+    # Répertoire utilisé par Certbot pour le challenge
+    root /usr/share/nginx/html;
+
+    location /.well-known/acme-challenge/ {
+        allow all;
+    }
+
+    # Réponse par défaut pour tout le reste
+    location / {
+        return 200 'Temporary Nginx running for Certbot validation\n';
+        add_header Content-Type text/plain;
+    }
+}
+CONF
+
+  # Temporairement ouvrir le port 80 dans UFW (si UFW est actif)
+  if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+    echo "🛡️ Ouverture temporaire du port 80 pour la validation Certbot..."
+    ufw allow 80/tcp comment "Temporary for Certbot"
+    ufw reload
+  fi
+
+  # Lancer le conteneur Nginx temporaire
   docker run -d --name nginx-temp \
     -p 80:80 \
-    -v /opt/calyra/nginx/conf.d/temp-certbot.conf:/etc/nginx/conf.d/default.conf:ro \
+    -v "$TEMP_CONF:/etc/nginx/conf.d/default.conf:ro" \
     -v /opt/calyra/nginx/html:/usr/share/nginx/html:ro \
-    nginx:latest
+    nginx:latest || { echo "❌ Échec du lancement de Nginx temporaire."; exit 1; }
+
+  # Attendre que Nginx soit prêt (optionnel, mais utile pour la robustesse)
+  sleep 5
+
+  # Lancer Certbot pour obtenir les certificats
   docker run -it --rm \
     -v /opt/calyra/certs:/etc/letsencrypt \
     -v /opt/calyra/nginx/html:/usr/share/nginx/html \
     certbot/certbot certonly --webroot \
     -w /usr/share/nginx/html \
     -d appsmith.ddns.net \
-    --agree-tos --no-eff-email -m admin@appsmith.ddns.net
+    --agree-tos --no-eff-email -m admin@appsmith.ddns.net || { echo "❌ Échec de la génération des certificats."; docker stop nginx-temp; docker rm nginx-temp; exit 1; }
+
+  # Arrêter et supprimer le conteneur Nginx temporaire
   docker stop nginx-temp && docker rm nginx-temp
-  ls -l /opt/calyra/certs/live/appsmith.ddns.net/
-  echo "✅ Certificats SSL générés avec succès."
+
+  # Supprimer le fichier de config temporaire
+  rm -f "$TEMP_CONF"
+
+  # Fermer le port 80 dans UFW si ouvert temporairement
+  if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+    echo "🛡️ Fermeture du port 80 après validation Certbot..."
+    ufw delete allow 80/tcp
+    ufw reload
+  fi
+
+  # Vérifier que les certificats ont bien été générés
+  if [[ -f "$FULLCHAIN" && -f "$PRIVKEY" ]]; then
+    ls -l "$CERT_PATH/"
+    echo "✅ Certificats SSL générés avec succès."
+  else
+    echo "❌ Les certificats n'ont pas été générés correctement."
+    exit 1
+  fi
 fi
 
 # =====================================================
