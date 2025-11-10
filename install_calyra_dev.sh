@@ -417,7 +417,7 @@ services:
     networks:
       - calyra_net
     healthcheck:
-      test: ["CMD", "wget", "--spider", "localhost:8080"]
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/localhost/26500' && echo 'OK' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
