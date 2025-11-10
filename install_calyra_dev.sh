@@ -310,6 +310,14 @@ server {
 }
 CONF
 
+# === Initialisation MongoDB Replica Set ===
+echo "🧠 Initialisation du replica set MongoDB..."
+docker compose up -d mongodb
+sleep 10
+docker exec -it mongodb mongosh -u appsmith -p appsmithpass --authenticationDatabase admin --eval \
+'rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "mongodb:27017" }] })' || true
+sleep 5
+
 # =====================================================
 # 8 Démarrage de la stack
 # =====================================================
