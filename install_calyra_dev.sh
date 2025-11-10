@@ -333,10 +333,11 @@ services:
     networks:
       - calyra_net
     healthcheck:
-      test: ["CMD", "wget", "--spider", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "curl -k -f https://localhost || curl -f http://localhost || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
 
 networks:
   calyra_net:
