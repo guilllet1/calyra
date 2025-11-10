@@ -63,12 +63,40 @@ chown 999:999 ./data/mongo_key/mongodb-keyfile
 # 5 Génération des certificats
 # =====================================================
 echo "🔏 Génération des certificats Let's Encrypt..."
-docker compose down || true
-sleep 5
+mkdir -p /opt/calyra/nginx/html/.well-known/acme-challenge
+cat > /opt/calyra/nginx/conf.d/temp-certbot.conf <<'CONF'
+server {
+    listen 80;
+    server_name appsmith.ddns.net;
+
+    # Répertoire utilisé par Certbot pour le challenge
+    root /usr/share/nginx/html;
+
+    location /.well-known/acme-challenge/ {
+        allow all;
+    }
+
+    # Réponse par défaut pour tout le reste
+    location / {
+        return 200 'Temporary Nginx running for Certbot validation\n';
+        add_header Content-Type text/plain;
+    }
+}
+CONF
+docker run -d --name nginx-temp \
+  -p 80:80 \
+  -v /opt/calyra/nginx/conf.d/temp-certbot.conf:/etc/nginx/conf.d/default.conf:ro \
+  -v /opt/calyra/nginx/html:/usr/share/nginx/html:ro \
+  nginx:latest
 docker run -it --rm \
   -v /opt/calyra/certs:/etc/letsencrypt \
-  certbot/certbot certonly --standalone \
-  -d appsmith.ddns.net --agree-tos --no-eff-email -m admin@appsmith.ddns.net || true
+  -v /opt/calyra/nginx/html:/usr/share/nginx/html \
+  certbot/certbot certonly --webroot \
+  -w /usr/share/nginx/html \
+  -d appsmith.ddns.net \
+  --agree-tos --no-eff-email -m admin@appsmith.ddns.net
+docker stop nginx-temp && docker rm nginx-temp
+ls -l /opt/calyra/certs/live/appsmith.ddns.net/
   
 # =====================================================
 # 6 docker-compose.yml
