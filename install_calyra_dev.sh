@@ -52,7 +52,7 @@ mkdir -p /opt/calyra/{data/mongo,data/mongo_key,data/postgres,data/redis,data/ap
 cd /opt/calyra
 
 # =====================================================
-# 4️⃣ Génération clé MongoDB
+# 4️ Génération clé MongoDB
 # =====================================================
 echo "🔑 Génération de la clé MongoDB..."
 openssl rand -base64 756 > ./data/mongo_key/mongodb-keyfile
@@ -60,7 +60,18 @@ chmod 400 ./data/mongo_key/mongodb-keyfile
 chown 999:999 ./data/mongo_key/mongodb-keyfile
 
 # =====================================================
-# 5️⃣ docker-compose.yml
+# 5 Génération des certificats
+# =====================================================
+echo "🔏 Génération des certificats Let's Encrypt..."
+docker compose down || true
+sleep 5
+docker run -it --rm \
+  -v /opt/calyra/certs:/etc/letsencrypt \
+  certbot/certbot certonly --standalone \
+  -d appsmith.ddns.net --agree-tos --no-eff-email -m admin@appsmith.ddns.net || true
+  
+# =====================================================
+# 6 docker-compose.yml
 # =====================================================
 echo "🧩 Création du docker-compose.yml..."
 
@@ -204,7 +215,7 @@ networks:
 YAML
 
 # =====================================================
-# 6️⃣ Configuration Nginx
+# 7 Configuration Nginx
 # =====================================================
 echo "🌐 Configuration Nginx..."
 
@@ -219,14 +230,20 @@ server {
     listen 443 ssl;
     server_name appsmith.ddns.net;
 
-    ssl_certificate     /etc/ssl/private/fullchain.pem;
-    ssl_certificate_key /etc/ssl/private/privkey.pem;
+    ssl_certificate     /etc/ssl/private/live/appsmith.ddns.net/fullchain.pem;
+    ssl_certificate_key /etc/ssl/private/live/appsmith.ddns.net/privkey.pem;
+
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
 
     location / {
         proxy_pass http://appsmith:80/;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
     }
 }
 CONF
@@ -242,20 +259,26 @@ server {
     listen 443 ssl;
     server_name camunda.ddns.net;
 
-    ssl_certificate     /etc/ssl/private/fullchain.pem;
-    ssl_certificate_key /etc/ssl/private/privkey.pem;
+    ssl_certificate     /etc/ssl/private/live/appsmith.ddns.net/fullchain.pem;
+    ssl_certificate_key /etc/ssl/private/live/appsmith.ddns.net/privkey.pem;
+
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
 
     location / {
         proxy_pass http://operate:8080/;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
     }
 }
 CONF
 
 # =====================================================
-# 7️⃣ Démarrage de la stack
+# 8 Démarrage de la stack
 # =====================================================
 echo "🚀 Démarrage de la stack Calyra..."
 docker compose up -d
