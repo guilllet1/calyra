@@ -1,7 +1,12 @@
 #!/bin/bash
 set -e
 clear
-echo "🚀 Installation complète de Calyra Dev Stack"
+echo "🚀 Installation complète de Calyra Dev Stack (Camunda 8 + Appsmith + PostgreSQL + Elasticsearch + Nginx)"
+
+# Fonction pour générer un mot de passe aléatoire si non défini
+generate_password() {
+  openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 20
+}
 
 # =====================================================
 # 🔧 Chargement du fichier de configuration (obligatoire)
@@ -14,13 +19,7 @@ CONFIG_FILE="$SCRIPT_DIR/config.env"
 # Vérifier la présence du fichier config.env
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "❌ Fichier de configuration manquant : $CONFIG_FILE"
-  echo "👉 Créez un fichier config.env dans le même répertoire que ce script, contenant par exemple :"
-  echo ""
-  echo "POSTGRES_PASSWORD=monMotDePassePostgres"
-  echo "MONGODB_PASSWORD=monMotDePasseMongo"
-  echo ""
-  echo "Arrêt de l'installation."
-  exit 1
+  echo "👉 Créez un fichier config.env dans le même répertoire que ce script"
 fi
 
 # Charger les variables depuis config.env
@@ -48,39 +47,46 @@ echo "   - MongoDB : $MONGODB_PASSWORD"
 # 0️⃣ Nettoyage si installation précédente détectée
 # =====================================================
 if [ -d "/opt/calyra" ]; then
-  echo "🧹 Une installation existante a été détectée."
+  echo "🧹 Une installation existante de Calyra a été détectée."
 
-  # Vérifier si les bases PostgreSQL et MongoDB existent
+  # Répertoires de données à préserver
   PG_VOLUME="/opt/calyra/data/postgres"
   MONGO_VOLUME="/opt/calyra/data/mongo"
+  APPSMITH_STACKS="/opt/calyra/data/appsmith-stacks"
+  APPSMITH_DATA="/opt/calyra/data/appsmith-data"
 
+  # Vérification de l’existence des conteneurs
   PG_EXISTS=$(docker ps -a --format '{{.Names}}' | grep -c '^postgres$' || true)
   MONGO_EXISTS=$(docker ps -a --format '{{.Names}}' | grep -c '^mongodb$' || true)
   DB_PRESERVE=false
 
+  # Détection des volumes de bases de données existants
   if [[ -d "$PG_VOLUME" || -d "$MONGO_VOLUME" || $PG_EXISTS -gt 0 || $MONGO_EXISTS -gt 0 ]]; then
-    echo "🛑 Des bases de données existantes ont été détectées."
-    echo "   👉 Elles ne seront PAS supprimées."
+    echo "🛑 Des bases de données PostgreSQL ou MongoDB ont été détectées."
+    echo "   👉 Ces données seront préservées par défaut."
     DB_PRESERVE=true
   fi
 
-  echo "Souhaitez-vous réinitialiser l’installation (hors bases de données) ? (y/n)"
+  echo ""
+  echo "Souhaitez-vous réinitialiser l’installation (hors bases et données Appsmith) ? (y/n)"
   read -r confirm
+
   if [[ $confirm =~ ^[Yy]$ ]]; then
-    echo "🧹 Nettoyage des services Docker (sauf bases de données)..."
+    echo "🧼 Arrêt des services Docker..."
     docker compose -f /opt/calyra/docker-compose.yml down || true
 
-    if [ "$DB_PRESERVE" = true ]; then
-      find /opt/calyra/ -mindepth 1 -maxdepth 1 \
-        -not -path '/opt/calyra/certs*' \
-        -not -path '/opt/calyra/data/postgres*' \
-        -not -path '/opt/calyra/data/mongo*' \
-        -exec rm -rf {} +
-    else
-      find /opt/calyra/ -mindepth 1 -maxdepth 1 -not -path '/opt/calyra/certs*' -exec rm -rf {} +
-    fi
+    echo "🧽 Nettoyage des fichiers (en conservant bases & données Appsmith)..."
+    find /opt/calyra/ -mindepth 1 -maxdepth 1 \
+      -not -path '/opt/calyra/certs*' \
+      -not -path "$PG_VOLUME" \
+      -not -path "$MONGO_VOLUME" \
+      -not -path "$APPSMITH_STACKS" \
+      -not -path "$APPSMITH_DATA" \
+      -exec rm -rf {} + 2>/dev/null || true
 
-    echo "✅ Nettoyage terminé (bases préservées si existantes)."
+    echo "✅ Nettoyage terminé :"
+    echo "   - Bases PostgreSQL et MongoDB préservées"
+    echo "   - Volumes Appsmith persistants conservés"
   else
     echo "❌ Installation annulée."
     exit 0
@@ -230,15 +236,15 @@ services:
     container_name: postgres
     restart: always
     environment:
-      POSTGRES_USER: camunda
-      POSTGRES_PASSWORD: camundapass
-      POSTGRES_DB: camunda
+      POSTGRES_USER: calyrausername
+      POSTGRES_PASSWORD: XXXXPostgreSQL
+      POSTGRES_DB: calyra
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     networks:
       - calyra_net
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "camunda"]
+      test: ["CMD", "pg_isready", "-U", "calyrausername"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -263,59 +269,71 @@ services:
     restart: always
     command: ["--replSet", "rs0", "--bind_ip_all", "--keyFile", "/data/key/mongodb-keyfile"]
     environment:
-      MONGO_INITDB_ROOT_USERNAME: appsmith
-      MONGO_INITDB_ROOT_PASSWORD: appsmithpass
+      MONGO_INITDB_ROOT_USERNAME: mongousername
+      MONGO_INITDB_ROOT_PASSWORD: XXXXMongoDB
     volumes:
       - ./data/mongo:/data/db
       - ./data/mongo_key:/data/key
     networks:
       - calyra_net
     healthcheck:
-      test: ["CMD-SHELL", "mongosh -u appsmith -p appsmithpass --authenticationDatabase admin --quiet --eval 'try { rs.status() } catch (e) { quit(1) }; quit(0)'"]
+      test: ["CMD-SHELL", "mongosh -u mongousername -p XXXXMongoDB --authenticationDatabase admin --quiet --eval 'try { rs.status() } catch (e) { quit(1) }; quit(0)'"]
       interval: 10s
       timeout: 5s
       retries: 10  # Plus de retries pour donner du temps à l'init
 
   appsmith:
-    image: appsmith/appsmith-ce
+    image: appsmith/appsmith-ee:v1.90
     container_name: appsmith
-    restart: always
     depends_on:
       redis:
         condition: service_healthy
       mongodb:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       - APPSMITH_REDIS_URL=redis://redis:6379
-      - APPSMITH_MONGODB_URI=mongodb://appsmith:appsmithpass@mongodb:27017/appsmith?authSource=admin&replicaSet=rs0
+      - APPSMITH_MONGODB_URI=mongodb://mongousername:XXXXMongoDB@mongodb:27017/appsmith?authSource=admin&replicaSet=rs0
       - APPSMITH_DISABLE_TELEMETRY=true
       - APPSMITH_MAIL_ENABLED=false
       - APPSMITH_CUSTOM_DOMAIN=https://appsmith.ddns.net
       - APPSMITH_ROOT_REDIRECT_URL=/
+      - APPSMITH_LICENSE_KEY=37D050-462203-1D757A-07A569-F70C64-V3
+      - APPSMITH_BACKEND_HOST=0.0.0.0
+      - APPSMITH_AI_ENABLED=false
+      - APPSMITH_POSTGRES_SSL_DISABLED=true
+      - APPSMITH_INTERNAL_BACKEND_URL=http://localhost:8080
+      - APPSMITH_RTS_POSTGRESQL_URL=postgresql://calyrausername:XXXXPostgreSQL@postgres:5432/calyra?sslmode=disable
     volumes:
       - ./data/appsmith-stacks:/appsmith-stacks
+    ports:
+      - "80:80"
+      - "443:443"
     networks:
       - calyra_net
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:80/api/v1/health || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 30
-      start_period: 120s
+      disable: true
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0  # Aligné avec Camunda version
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.5
     container_name: elasticsearch
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
       - network.host=0.0.0.0
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
     user: "1000:1000"
     volumes:
       - ./data/elasticsearch:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsSL http://localhost:9200/_cluster/health || exit 1"]
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
       interval: 20s
       timeout: 10s
       retries: 50
@@ -334,9 +352,9 @@ services:
       - ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_ARGS_INDEX_PREFIX=zeebe-record
       - ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_ARGS_BULK_DELAY=5
       - ZEEBE_BROKER_GATEWAY_NETWORK_HOST=0.0.0.0
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/camunda
-      - SPRING_DATASOURCE_USERNAME=camunda
-      - SPRING_DATASOURCE_PASSWORD=camundapass
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/calyra
+      - SPRING_DATASOURCE_USERNAME=calyrausername
+      - SPRING_DATASOURCE_PASSWORD=XXXXPostgreSQL
     depends_on:
       postgres:
         condition: service_healthy
@@ -415,17 +433,15 @@ services:
 networks:
   calyra_net:
     driver: bridge
+
 YAML
 else
   echo "🧩 docker-compose.yml existe déjà. Création sautée."
 fi
 
-# Remplacer les mots de passe dans docker-compose.yml (si générés)
-sed -i "s/POSTGRES_PASSWORD: camundapass/POSTGRES_PASSWORD: $POSTGRES_PASSWORD/g" "$COMPOSE_FILE"
-sed -i "s/MONGO_INITDB_ROOT_PASSWORD: appsmithpass/MONGO_INITDB_ROOT_PASSWORD: $MONGODB_PASSWORD/g" "$COMPOSE_FILE"
-sed -i "s/appsmithpass/$MONGODB_PASSWORD/g" "$COMPOSE_FILE"
-sed -i "s/SPRING_DATASOURCE_PASSWORD=camundapass/SPRING_DATASOURCE_PASSWORD=$POSTGRES_PASSWORD/g" "$COMPOSE_FILE"
-sed -i "s/-p appsmithpass/-p $MONGODB_PASSWORD/g" "$COMPOSE_FILE"  # Remplacer dans le healthcheck de MongoDB
+# Remplacer les mots de passe dans docker-compose.yml
+sed -i "s/XXXXPostgreSQL/$POSTGRES_PASSWORD/g" "$COMPOSE_FILE"
+sed -i "s/XXXXMongoDB/$MONGODB_PASSWORD/g" "$COMPOSE_FILE"
 
 # =====================================================
 # 7 Configuration Nginx
@@ -548,8 +564,7 @@ until docker exec mongodb mongosh --quiet --eval "db.adminCommand('ping')" > /de
 done
 echo "✅ MongoDB est accessible."
 
-echo "🧩 Initialisation du ReplicaSet MongoDB si nécessaire..."
-docker exec mongodb mongosh -u appsmith -p "$MONGODB_PASSWORD" --authenticationDatabase admin --quiet --eval '
+docker exec mongodb mongosh -u mongousername -p "$MONGODB_PASSWORD" --authenticationDatabase admin --quiet --eval '
 try {
   const status = rs.status();
   print("✅ ReplicaSet déjà initialisé (" + status.set + ")");
@@ -558,7 +573,11 @@ try {
   rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "mongodb:27017" }] });
 }
 '
+echo "🧩 Initialisation de mongousername..."
+docker exec -it mongodb mongosh -u mongousername -p "$MONGODB_PASSWORD" --authenticationDatabase admin --quiet --eval 'db.getSiblingDB("admin").grantRolesToUser("mongousername", [{ role: "readWrite", db: "appsmith" }])'
+
 sleep 5
+
 
 # =====================================================
 # 8 Démarrage de la stack
@@ -570,3 +589,4 @@ echo "✅ Installation terminée."
 echo "🌐 Accès :"
 echo "   - Appsmith : https://appsmith.ddns.net/"
 echo "   - Camunda Operate : https://camunda.ddns.net/"
+echo "   - Adminer : https://adminera.ddns.net/"
