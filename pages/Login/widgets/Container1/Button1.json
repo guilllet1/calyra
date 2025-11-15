@@ -1,0 +1,50 @@
+{
+  "animateLoading": true,
+  "borderRadius": "{{appsmith.theme.borderRadius.appBorderRadius}}",
+  "bottomRow": 19,
+  "boxShadow": "none",
+  "buttonColor": "{{appsmith.theme.colors.primaryColor}}",
+  "buttonVariant": "PRIMARY",
+  "disabledWhenInvalid": false,
+  "dynamicBindingPathList": [
+    {
+      "key": "buttonColor"
+    },
+    {
+      "key": "borderRadius"
+    }
+  ],
+  "dynamicTriggerPathList": [
+    {
+      "key": "onClick"
+    }
+  ],
+  "isDefaultClickDisabled": true,
+  "isDisabled": false,
+  "isLoading": false,
+  "isVisible": true,
+  "key": "bp23lrfx5l",
+  "leftColumn": 46,
+  "minWidth": 120,
+  "mobileBottomRow": 19,
+  "mobileLeftColumn": 46,
+  "mobileRightColumn": 62,
+  "mobileTopRow": 15,
+  "needsErrorInfo": false,
+  "onClick": "{{JSObject1.signIn();}}",
+  "parentColumnSpace": 5.56884765625,
+  "parentId": "u4mpj2x4ff",
+  "parentRowSpace": 10,
+  "placement": "CENTER",
+  "recaptchaType": "V3",
+  "renderMode": "CANVAS",
+  "resetFormOnClick": false,
+  "responsiveBehavior": "hug",
+  "rightColumn": 62,
+  "text": "Login",
+  "topRow": 15,
+  "type": "BUTTON_WIDGET",
+  "version": 1,
+  "widgetId": "8yr8sgpk19",
+  "widgetName": "Button1"
+}
